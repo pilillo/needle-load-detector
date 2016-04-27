@@ -31,7 +31,7 @@ class DatasetProcessor:
         for d in self.select_days_from_building(building, days_no):
             self.df = self.df.append(self.load_day( path+d ))
 
-        self.df = self.df[self.df.index != 'timestamp'] # skip faulty lines
+        #self.df = self.df[self.df.index != 'timestamp'] # skip faulty lines
         self.df = self.df.sort_index()                  # sort by timestamp
         self.df.index = pd.to_datetime(self.df.index, unit="s")
         return self.df        
@@ -46,22 +46,35 @@ class DatasetProcessor:
     def load_day(self, path):
         return pd.DataFrame.from_csv(path, header=0)
         
-    def preprocess_dataset(self, sizes=[]):
+    def remove_holes(self):
         # Remove all NaN from the timeseries
         while self.df.isnull().any().any():
             self.df = self.df.fillna(method='bfill', limit=1)	# fill missing values with next known ones
             self.df = self.df.fillna(method='pad', limit=1)	# fill missing values with last known ones
-        """
+        return self.df
+        
+    def remove_noise(self, sizes=[]):        
+        for i, c in enumerate(self.df.columns):
+            if sizes[i] > 0: self.df[c] = pd.rolling_median(self.df[c], window=sizes[i], how='median')
+        #self.df = pd.rolling_median(self.ds, window=3, how='median') #signal.medfilt(self.df, 21)        
+        return self.df
+        
+    def interpolate(self):
         #print self.df.count()
         #print self.df
         self.df = self.df.interpolate(method='time')	# interpolate timeserie
-        #print self.ds.count()
-        #print self.ds
-        for i, c in enumerate(self.df.columns):
-            if sizes[i] > 0: self.df[c] = pd.rolling_median(self.df[c], window=sizes[i], how='median')
-        #self.ds = pd.rolling_median(self.ds, window=3, how='median') #signal.medfilt(self.ds, 21)
-        """
+        #print self.df.count()
+        #print self.df        
         return self.df
+        
+    def downsample_asbins(self, new_period):
+        # series.resample('3T', how='sum')
+        return self.df.resample(new_period, how='sum')
+        
+    def downsample(self, new_period): #, fill_method='bfill'):
+        # http://pandas.pydata.org/pandas-docs/version/0.17.0/generated/pandas.DataFrame.resample.html
+        # series.resample('30S', fill_method='bfill')        
+        return self.df.resample(new_period, how='mean') #fill_method, how='mean')
     
     def select_datetime_interval(self, start_date, end_date):
         mask = (self.df.index > start_date) & (self.df.index <= end_date)
@@ -108,8 +121,8 @@ class BatchLoadDisaggregator:
             corr = np.corrcoef( w, s )[0][1]
             if abs(corr) > self.max_corr: self.max_corr = abs(corr)        
         
-            print corr
             if abs(corr) > min_corr:   
+                print( corr )            
                 plt.figure()            
                 plt.plot( range(window_size), w)
                 plt.plot( range(window_size), s)
@@ -149,15 +162,17 @@ dataset_folder = "/Users/andreamonacchi/Downloads/GREEND_0-2_300615/"
 template_folder = "/Users/andreamonacchi/Desktop/"
         
 processor = DatasetProcessor(dataset_folder)        
-df = processor.get_dataframe(1, 4) # 4)
+df = processor.get_dataframe(1, 4)
 
-#ax = df.plot(legend=False)
-#patches, labels = ax.get_legend_handles_labels()
-#ax.legend(patches, labels, bbox_to_anchor=(1, 1), loc='upper left', ncol=1)
+ax = df.plot(legend=False)
+patches, labels = ax.get_legend_handles_labels()
+ax.legend(patches, labels, bbox_to_anchor=(1, 1), loc='upper left', ncol=1)
 
 # preprocess the dataset
-preprocessed = processor.preprocess_dataset(sizes=[30]*9) 
-#preprocessed.plot()
+preprocessed = processor.remove_holes()     # fill with our method (pad and bfill)
+preprocessed = processor.remove_noise(sizes=[30]*9) # median filter over 30 consecutive samples
+#preprocessed = processor.downsample('10S')          # downsample to 1/10 Hz 
+preprocessed.plot()
 
 # get the datastore (from disk)
 processor.get_datastore(template_folder+"dev_signatures.h5")
@@ -215,7 +230,9 @@ if extract:
 
 else:
     # select a template and attempt the disaggregation
-    templates = [processor.get_signature('devices/d0'), processor.get_signature('devices/d1'), processor.get_signature('devices/d2'), processor.get_signature('devices/d3'), processor.get_signature('devices/d4'), None, processor.get_signature('devices/d6'), None, processor.get_signature('devices/d8') ]
+    templates = [processor.get_signature('devices/d0'), processor.get_signature('devices/d1'), processor.get_signature('devices/d2'), processor.get_signature('devices/d3'), processor.get_signature('devices/d4'), None, 
+                 None, #processor.get_signature('devices/d6'),
+                 None, None] # processor.get_signature('devices/d8') ]
     """    
     for i, t in enumerate(templates):
         if t is not None and (not t.empty):
@@ -225,7 +242,7 @@ else:
     """
     #plt.figure()
     agg = processor.get_aggregated_signal()
-    agg.plot()
+    #agg.plot()
         
     disaggregator = BatchLoadDisaggregator( templates )
     """
@@ -234,9 +251,9 @@ else:
     print "Device "+str(d_id)+" detected "+str(counts[d_id])+" times"
     print "MAX CORR: ", disaggregator.get_max_corr()
     """
-    counts = disaggregator.disaggregate_dataframe(agg, min_corr=0.95)
+    counts = disaggregator.disaggregate_dataframe(agg, device_id=-1, min_corr=0.99)
     for i, c in enumerate(counts):
-        print "Device "+str(i)+" detected "+str(c)+" times"
+        print( "Device "+str(i)+" detected "+str(c)+" times" )
 
 plt.show()
 
