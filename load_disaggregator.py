@@ -71,10 +71,14 @@ class DatasetProcessor:
         # series.resample('3T', how='sum')
         return self.df.resample(new_period, how='sum')
         
-    def downsample(self, new_period): #, fill_method='bfill'):
+    def downsample(self, new_period):
         # http://pandas.pydata.org/pandas-docs/version/0.17.0/generated/pandas.DataFrame.resample.html
-        # series.resample('30S', fill_method='bfill')        
-        return self.df.resample(new_period, how='mean') #fill_method, how='mean')
+        self.df = self.df.resample(new_period, how='mean')
+        return self.df
+        
+    def uniform_period(self, sampling_frequency='1S'): # default is 1Hz
+        self.df = self.df.resample(sampling_frequency, fill_method='bfill')
+        return self.df
     
     def select_datetime_interval(self, start_date, end_date):
         mask = (self.df.index > start_date) & (self.df.index <= end_date)
@@ -169,10 +173,11 @@ patches, labels = ax.get_legend_handles_labels()
 ax.legend(patches, labels, bbox_to_anchor=(1, 1), loc='upper left', ncol=1)
 
 # preprocess the dataset
-preprocessed = processor.remove_holes()     # fill with our method (pad and bfill)
+preprocessed = processor.remove_holes()             # fill with our method (pad and bfill)
+preprocessed = processor.uniform_period()           # makes sure the signal is at 1Hz
 preprocessed = processor.remove_noise(sizes=[30]*9) # median filter over 30 consecutive samples
-#preprocessed = processor.downsample('10S')          # downsample to 1/10 Hz 
-preprocessed.plot()
+preprocessed = processor.downsample('10S')          # downsample to 1/10 Hz (should make device signature even more similar by removing spikes)
+preprocessed.plot(title="Preprocessed signal")
 
 # get the datastore (from disk)
 processor.get_datastore(template_folder+"dev_signatures.h5")
@@ -184,25 +189,23 @@ if extract:
     # Extract signatures for individual devices
     #disagg = processor.get_disaggregated_signal(devices[1])
     #disagg.plot()
-
+    
     # Device 0 (fridge)
     ##signature = processor.select_time_interval('08:18:40', '08:28:40')[devices[0]]
-    signature0 = processor.select_datetime_interval('2014-03-12 08:18:40', '2014-03-12 08:28:40')[devices[0]]
+    signature0 = processor.select_datetime_interval('2014-03-12 08:18:40', '2014-03-12 08:29:00')[devices[0]]
     processor.add_signature('devices/d0', signature0)
-    #print processor.get_signature('devices/d0')
-
+    
     #Device 1 (dishwasher)
     signature1 = processor.select_datetime_interval('2014-03-13 10:28:30',  '2014-03-13 11:45:00')[devices[1]]
     processor.add_signature('devices/d1', signature1)
-
+    
     # Device 2 (microwave)
     ##signature = processor.select_time_interval('18:24:40', '18:26:20')[devices[2]]
     signature2 = processor.select_datetime_interval('2014-03-12 18:24:40',  '2014-03-12 18:26:20')[devices[2]]
     processor.add_signature('devices/d2', signature2)
-    #print processor.get_signature('devices/d2')
 
     # Device 3 water kettle
-    signature3 = processor.select_datetime_interval('2014-03-15 08:32:00', '2014-03-15 08:42:00')[devices[3]]    
+    signature3 = processor.select_datetime_interval('2014-03-15 08:32:00', '2014-03-15 08:42:20')[devices[3]]    
     processor.add_signature('devices/d3', signature3)
 
     # Device 4
@@ -215,45 +218,50 @@ if extract:
     #processor.add_signature('devices/d5', signature5)
 
     # Device 6 (hair dryer + charger )
-    signature6 = processor.select_datetime_interval('2014-03-15 10:03:45', '2014-03-15 10:06:20')[devices[6]]
+    signature6 = processor.select_datetime_interval('2014-03-15 10:03:45', '2014-03-15 10:06:30')[devices[6]]
     processor.add_signature('devices/d6', signature6)
-    
+
     # Device 7 (food processor) --> neverused
     #signature = processor.select_datetime_interval('', '')[devices[7]]
     
     # Device 8 Bedside lamp
     signature8 = processor.select_datetime_interval('2014-03-13 22:27:45', '2014-03-13 22:37:40')[devices[8]]
     processor.add_signature('devices/d8', signature8)
-    
+
     #plt.figure()
     #signature.plot(legend=False)
-
+    
 else:
     # select a template and attempt the disaggregation
     templates = [processor.get_signature('devices/d0'), processor.get_signature('devices/d1'), processor.get_signature('devices/d2'), processor.get_signature('devices/d3'), processor.get_signature('devices/d4'), None, 
                  None, #processor.get_signature('devices/d6'),
                  None, None] # processor.get_signature('devices/d8') ]
-    """    
+        
+    """
     for i, t in enumerate(templates):
         if t is not None and (not t.empty):
-            print t
+            #print( t )
             plt.figure()
             t.plot(title="device_"+str(i))
     """
+    
     #plt.figure()
     agg = processor.get_aggregated_signal()
     #agg.plot()
         
     disaggregator = BatchLoadDisaggregator( templates )
+    
     """
     d_id = 4
     counts = disaggregator.disaggregate_dataframe(agg, device_id=d_id, min_corr=0.9)
     print "Device "+str(d_id)+" detected "+str(counts[d_id])+" times"
     print "MAX CORR: ", disaggregator.get_max_corr()
     """
-    counts = disaggregator.disaggregate_dataframe(agg, device_id=-1, min_corr=0.99)
+
+    counts = disaggregator.disaggregate_dataframe(agg, device_id=-1, min_corr=0.95)
     for i, c in enumerate(counts):
         print( "Device "+str(i)+" detected "+str(c)+" times" )
+    
 
 plt.show()
 
